@@ -4,15 +4,9 @@ title: About
 permalink: /about/
 ---
 
-This is the base Jekyll theme. You can find out more info about customizing your Jekyll theme, as well as basic Jekyll usage documentation at [jekyllrb.com](https://jekyllrb.com/)
+Modern Linux Device Driver offers a comprehensive learning tool for the 'Linux Device Driver, 3rd Edition'. It presents a bottom-up approach to implementing device driver code that is compatible with modern Linux systems, providing an in-depth understanding for those seeking to master the art of Linux device driver development.
 
-You can find the source code for Minima at GitHub:
-[jekyll][jekyll-organization] /
-[minima](https://github.com/jekyll/minima)
-
-You can find the source code for Jekyll at GitHub:
-[jekyll][jekyll-organization] /
-[jekyll](https://github.com/jekyll/jekyll)
+You can find the source code for Modern Linux Device Driver at Github: [kimgb415/modern-linux-device-driver][ldd-repo] 
 
 
-[jekyll-organization]: https://github.com/jekyll
+[ldd-repo]: https://github.com/kimgb415/modern-linux-device-driver

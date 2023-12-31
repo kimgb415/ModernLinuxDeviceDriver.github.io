@@ -21,9 +21,9 @@
 title: Modern Linux Device Drvier
 email: kimgb415@gmail.com
 description: >- # this means to ignore newlines until "baseurl:"
-  Write an awesome description for your new site here. You can edit this
-  line in _config.yml. It will appear in your document head meta (for
-  Google search results) and in your feed.xml site description.
+  Modern Linux Device Driver offers a comprehensive learning tool for the 'Linux Device Driver, 3rd Edition'. 
+  It presents a bottom-up approach to implementing device driver code that is compatible with modern Linux systems, 
+  providing an in-depth understanding for those seeking to master the art of Linux device driver development.
 baseurl: "" # the subpath of your site, e.g. /blog
 url: "" # the base hostname & protocol for your site, e.g. http://example.com
 github_username:  kimgb415
