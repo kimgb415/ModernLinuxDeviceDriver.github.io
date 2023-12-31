@@ -1,0 +1,541 @@
+---
+layout: post
+title:  "Chapter 3. Char Drivers"
+date:   2023-12-30 22:32:15 +0900
+categories: Chapter 3
+---
+
+| | Syntax | Description |
+|-- | -- | -- |
+| Definition | kernel macro for kernel modules | command line utility in Unix and Linux systems |
+| Functionality | to create a device number, which will be used by kernel to reference the device | to create devices files in the file system
+
+With the above knowledge in mind, I considered the reordering of the implementation as below more appropriate in the developer’s pointer of view.
+
+# 3.4 Char Device Registration
+
+> Full code in https://github.com/kimgb415/gaby-ldd/tree/Chapter3/Char-Device-Registration
+
+## `scull.h`
+
+Header file defines the minimum information for char device registration
+
+{% highlight c %}
+#ifndef SCULL_MAJOR
+#define SCULL_MAJOR 0   /* dynamic major by default */
+#endif
+
+#ifndef SCULL_NR_DEVS
+#define SCULL_NR_DEVS 4    /* scull0 through scull3 */
+#endif
+
+#include <linux/cdev.h>
+
+extern int scull_major;
+extern int scull_nr_devs;
+
+struct scull_dev {
+	struct cdev cdev;
+};
+{% endhighlight %}
+
+## `main.c`
+
+Modules parameters are initialized and defined
+
+{% highlight c %}
+#include <linux/moduleparam.h>
+#include "scull.h"
+
+
+int scull_major =   SCULL_MAJOR;
+int scull_minor =   0;
+int scull_nr_devs = SCULL_NR_DEVS;	/* number of bare scull devices */
+
+// S_IRUGO: parameter that is read only by the world
+// S_IRUGO | S_IWUSR: parameter can only be modified by the root user
+module_param(scull_major, int, S_IRUGO);
+module_param(scull_minor, int, S_IRUGO);
+module_param(scull_nr_devs, int, S_IRUGO);
+{% endhighlight %}
+
+Then we define array of scull devices and functions to register char device.
+
+
+{% highlight c %}
+struct scull_dev *scull_devices;	/* allocated in scull_init_module */
+
+struct file_operations scull_fops = {
+	.owner =    THIS_MODULE,
+	};
+
+/*
+ * The cleanup function is used to handle initialization failures as well.
+ * Thefore, it must be careful to work correctly even if some of the items
+ * have not been initialized
+ */
+void scull_cleanup_module(void)
+{
+	dev_t devno = MKDEV(scull_major, scull_minor);
+
+	/* Get rid of our char dev entries */
+	if (scull_devices) {
+		for (int i = 0; i < scull_nr_devs; i++) {
+			cdev_del(&scull_devices[i].cdev);
+		}
+		kfree(scull_devices);
+	}
+
+	/* cleanup_module is never called if registering failed */
+	unregister_chrdev_region(devno, scull_nr_devs);
+}
+
+static void scull_setup_cdev(struct scull_dev *dev, int index)
+{
+	int devno = MKDEV(scull_major, scull_minor + index);
+	cdev_init(&dev->cdev, &scull_fops);
+	dev->cdev.owner = THIS_MODULE;
+	dev->cdev.ops = &scull_fops;
+	int err = cdev_add(&dev->cdev, devno, 1);
+	/* Fail gracefully if need be */
+	if (err)
+		pr_warning("Error %d addding scull%d\n", err, index);
+}
+
+static int __init scull_init_module(void)
+{
+	int result;
+	dev_t dev = 0;
+
+	/*
+	* Get a range of minor numbers to work with, asking for a dynamic
+	* major unless directed otherwise at load time.
+	*/
+	if (scull_major) {
+		dev = MKDEV(scull_major, scull_minor);
+		result = register_chrdev_region(dev, scull_nr_devs, "scull");
+	} else {
+		result = alloc_chrdev_region(&dev, scull_minor, scull_nr_devs,
+				"scull");
+		scull_major = MAJOR(dev);
+	}
+	if (result < 0) {
+		pr_warning("scull: can't get major %d\n", scull_major);
+		return result;
+	}
+
+	/* 
+	 * allocate the devices -- we can't have them static, as the number
+	 * can be specified at load time
+	 */
+	scull_devices = kmalloc(scull_nr_devs * sizeof(struct scull_dev), GFP_KERNEL);
+	if (!scull_devices) {
+		result = -ENOMEM;
+		goto fail;  /* Make this more graceful */
+	}
+	memset(scull_devices, 0, scull_nr_devs * sizeof(struct scull_dev));
+
+	for (int i = 0; i < scull_nr_devs; ++i)
+		scull_setup_cdev(&scull_devices[i], i);
+
+	return 0;
+
+fail:
+	scull_cleanup_module();
+	return result;
+}
+{% endhighlight %}
+
+Note that `scull_cleanup_module` function is not marked as `__exit` anymore, since it is not only used upon `module_exit`
+
+# 3.2 Major and Minor Numbers
+
+> Full code in https://github.com/kimgb415/gaby-ldd/tree/Chapter3/Dynamic-Allocation-of-Major-Numbers
+
+Scripts for module loading and unloading are almost the same with those shown in the book
+
+## `scull_load`
+
+
+{% highlight shell %}
+#!/bin/sh
+module="scull"
+device="scull"
+mode="664"
+
+# invoke insmod with all arguments we got
+# if insmod fails, the script will exit with error code of 1
+/sbin/insmod ./$module.ko $* || exit 1
+
+rm -rf /dev/${device}[0-3]
+
+# use awk to retrive the major number
+# from the line where the second field equals to out module name
+major=$(awk "\$2==\"$module\" {print \$1}" /proc/devices)
+
+for i in 0 1 2 3; do
+	mknod /dev/${device}$i c $major $i
+done
+
+group="staff"
+grep -q "^staff:" /etc/group || group="wheel"
+
+# since this script must be run by root
+chgrp $group /dev/${device}[0-3]
+chmod $mode /dev/${device}[0-3]
+{% endhighlight %}
+
+## `scull_unload`
+
+
+{% highlight shell %}
+#!/bin/sh
+module="scull"
+device="scull"
+
+# invoke rmmod with all arguments we got
+/sbin/rmmod $module $* || exit 1
+
+# Remove stale nodes
+rm -f /dev/${device} /dev/${device}[0-3]
+{% endhighlight %}
+
+When we run `make && sudo ./scull_load` , we will see the driver modules has been inserted and the devices are created.
+
+![lsmod after scull_load](/assets/img/chapter3/lsmod.png)
+
+Then we run `sudo ./scull_unload` , all stuffs are gone now
+
+![scull_unload](/assets/img/chapter3/unload.png)
+
+# 3.5 open and release
+
+> Full code in https://github.com/kimgb415/gaby-ldd/tree/Chapter3/open-and-release
+
+## `main.c`
+
+Here we implement the simplest open and release methods.
+
+{% highlight c %}
+/*
+ * Open and close
+ */
+int scull_open(struct inode *inode, struct file *filp)
+{
+	struct scull_dev *dev;
+	
+	dev = container_of(inode->i_cdev, struct scull_dev, cdev);
+	filp->private_data = dev;
+
+	pr_debug("scull device is opened\n");
+
+	return 0;
+}
+
+int scull_release(struct inode *inode, struct file *filp)
+{
+	pr_debug("scull device is released\n");
+	return 0;
+}
+
+struct file_operations scull_fops = {
+	.owner =    	THIS_MODULE,
+	.open = 		scull_open,
+	.release = 		scull_release,
+};
+{% endhighlight %}
+
+
+With above methods ready, we can see the debug messages in `scull_open` and `scull_release` when we execute `cat /dev/scull0`.
+
+# 3.6 scull’s Memory Usage
+
+> Full code in https://github.com/kimgb415/gaby-ldd/tree/Chapter3/scull-Memory-Usage
+
+It’s time to implement the core memory layout of scull device driver. 
+
+## `scull.h`
+
+`scull_dev->data` field is the head of the list, where each list node contains a 2d pointer array of void **, resulting in the 3d memory layout for the entire scull device.
+
+{%- highlight c -%}
+/*
+ * The bare device is a variable-length region of memory.
+ * Use a linked list of indirect blocks.
+ *
+ * "scull_dev->data" points to an array of pointers, each
+ * pointer refers to a memory area of SCULL_QUANTUM bytes.
+ *
+ * The array (quantum-set) is SCULL_QSET long.
+ */
+#ifndef SCULL_QUANTUM
+#define SCULL_QUANTUM 4000
+#endif
+
+#ifndef SCULL_QSET
+#define SCULL_QSET    1000
+#endif
+
+// ...
+/*
+ * Representation of scull quantum sets.
+ */
+struct scull_qset {
+	void **data;
+	struct scull_qset *next;
+};
+
+struct scull_dev {
+	struct scull_qset *data;  /* Pointer to first quantum set */
+	int quantum;              /* the current quantum size */
+	int qset;                 /* the current array size */
+	unsigned long size;       /* amount of data stored here */
+	struct semaphore sem;     /* mutual exclusion semaphore     */
+	struct cdev cdev;	  /* Char device structure		*/
+};
+{%- endhighlight -%}
+
+## `main.c`
+
+Code additions here are mainly about cleaning the memory area of scull device and other necessary initialization steps. The biggest change is the addition of `scull_trim` function
+
+{%- highlight c -%}
+/*
+ * Empty out the scull device; must be called with the device
+ * semaphore held.
+ */
+int scull_trim(struct scull_dev *dev)
+{
+	struct scull_qset *curr, *next; 
+	int qset = dev->qset;
+
+	// every kmalloced pointer should be kfreed from inside out
+	for (curr = dev->data; curr; curr = next) {
+		if (curr->data) {
+			for (int i = 0; i < qset; ++i)
+				kfree(curr->data[i]);
+			kfree(curr->data);
+			curr->data = NULL;
+		}
+		next = curr->next;
+		kfree(curr);
+	}
+	
+	// reset all the information of scull_dev
+	dev->size = 0;
+	dev->quantum = scull_quantum;
+	dev->qset = scull_qset;
+	dev->data = NULL;
+
+	return 0;
+}
+{%- endhighlight -%}
+
+For another, `init_MUTEX` is outdated and the new API for semaphore initialization is `sema_init`. Hence, the logic in `scull_init()` is a bit different
+
+{%- highlight c -%}
+static int __init scull_init_module(void)
+{
+	// ...
+	for (int i = 0; i < scull_nr_devs; ++i) {
+		scull_devices[i].quantum = scull_quantum;
+		scull_devices[i].qset = scull_qset;
+		sema_init(&scull_devices[i].sem, 1);
+		scull_setup_cdev(&scull_devices[i], i);
+	}
+	// ...
+}
+{%- endhighlight -%}
+
+If we add debug message in `scull_open` as below, we can see the device is opened with `O_WRONLY` when executing `echo hello | sudo dd of=/dev/scull0`.
+
+{%- highlight c -%}
+int scull_open(struct inode *inode, struct file *filp)
+{
+	struct scull_dev *dev;
+	
+	dev = container_of(inode->i_cdev, struct scull_dev, cdev);
+	filp->private_data = dev;
+
+	if ((filp->f_flags & O_ACCMODE) == O_WRONLY) {
+		if (down_interruptible(&dev->sem))
+			return -ERESTARTSYS;
+		printk(KERN_DEBUG "scull device is opened with O_WRONLY flag\n");
+		scull_trim(dev);
+		up(&dev->sem);
+	}
+	printk(KERN_DEBUG "scull device is opened\n");
+
+	return 0;
+}
+{%- endhighlight -%}
+
+![O_WRONLY test](/assets/img/chapter3/O_WRONLY.png)
+
+# 3.7 read and write
+
+> Full code in https://github.com/kimgb415/gaby-ldd/tree/Chapter3/read-and-write
+
+## `scull_read`
+It was quite hard for me to understand the `scull_read` in the example code at first glance. It turns out `scull_read` should take care of 3 cases of read request from user space in total.
+
+1. The required offset is already beyond the EOF of device file
+2. Though the offset is within the file, required count of bytes to read will go over EOF.
+3. Both offset and count are small enough
+Case 2 and 3 are the ones user can actually read something from our scull device, however, `scull_read` is implemented to return no more than a single quantum of data
+
+Another thing I struggled is to how to reach the target quantum from `loff_t *f_pos`. Here is the visualization example of retrieving the target quantum 
+
+![scull memory visualization](/assets/img/chapter3/visualization.png)
+
+With all the details above, hope it is better to understand the following `scull_read`.
+
+{%- highlight c -%}
+ssize_t scull_read(struct file *filp, char __user *buf, size_t count, loff_t *f_pos)
+{
+	ssize_t retval = 0;
+	struct scull_dev *dev = filp->private_data;
+
+	if (down_interruptible(&dev->sem)) {
+		retval = -ERESTARTSYS;
+		return retval;
+	}
+
+	// case 1. offset is alreay beyond EOF
+	if (*f_pos >= dev->size)
+		goto done;
+	
+	// case 2. offset is within EOF, while offset + count is beyond EOF
+	if (*f_pos + count > dev->size)
+		count = dev->size - *f_pos;
+
+	// case 3. offset + count is within EOF, look for the target quantum to copy to user space
+	int list_node_size = dev->qset * dev->quantum;
+	// locate the q_set list node
+	int qset_pointer_offset = *f_pos / list_node_size;
+	struct scull_qset *target = scull_follow(dev, qset_pointer_offset);
+
+	// then the quantum pointer, finally pinpoint the f_pos within the quantum
+	int quantum_pointer_offset = (*f_pos % list_node_size) / dev->quantum;
+	int quantum_offset = (*f_pos % list_node_size) % dev->quantum;
+	
+	if (!target || !target->data || !target->data[quantum_pointer_offset])
+		goto done;
+
+	// read only up to the end of this quantum
+	count = min(count, (size_t)dev->quantum - quantum_offset);
+	if (copy_to_user(buf, target->data[quantum_pointer_offset] + quantum_offset, count)) {
+		retval = -EFAULT;
+		goto done;
+	}
+	*f_pos += count;
+	retval = count;
+
+done:
+	up(&dev->sem);
+	printk(KERN_INFO "read %ld bytes from scull device", retval);
+
+	return retval;
+}
+{%- endhighlight -%}
+
+## `scull_write`
+
+`scull_write` is almost the same as `scull_read`, however, we have to allocate the memory by ourselves throughout the way to reach target quantum.
+
+Don’t forget to update the `dev->size`, since new data is written to our device.
+
+{%- highlight c -%}
+ssize_t scull_write(struct file *filp, const char __user *buf, size_t count, loff_t *f_pos)
+{
+	ssize_t retval = -ENOMEM;
+	struct scull_dev *dev = filp->private_data;
+
+	if (down_interruptible(&dev->sem))
+		return ERESTARTSYS;
+
+	
+	int list_node_size = dev->qset * dev->quantum;
+	// locate the q_set list node
+	int qset_pointer_offset = *f_pos / list_node_size;
+	struct scull_qset *target = scull_follow(dev, qset_pointer_offset);
+	if (!target)
+		goto done;
+
+	// then the quantum pointer, finally pinpoint the f_pos within the quantum
+	int quantum_pointer_offset = (*f_pos % list_node_size) / dev->quantum;
+	int quantum_offset = (*f_pos % list_node_size) % dev->quantum;
+
+	// allocate quantum set if needed
+	if (!target->data) {
+		target->data = kzalloc(dev->qset * sizeof(void *), GFP_KERNEL);
+		if (!target->data)
+			goto done;
+	}
+
+	// allocate quantum if needed
+	if (!target->data[quantum_pointer_offset]) {
+		target->data[quantum_pointer_offset] = kzalloc(dev->quantum, GFP_KERNEL);
+		if (!target->data[quantum_pointer_offset])
+			goto done;
+	}
+
+	// write only up to this quantum
+	count = min(count, (size_t)dev->quantum - quantum_offset);
+	if (copy_from_user(target->data[quantum_pointer_offset] + quantum_offset, buf, count)) {
+		retval = -EFAULT;
+		goto done;
+	}
+
+	*f_pos += count;
+	retval = count;
+
+	// update size of the device
+	dev->size = max((unsigned long)*f_pos, dev->size);
+
+done:
+	up(&dev->sem);
+	printk(KERN_INFO "write %ld bytes to scull device", retval);
+
+	return retval;
+}
+{%- endhighlight -%}
+
+
+## `scull_follow`
+
+`scull_follow` is a utility function used in both `scull_read` and `scull_write` to reach the `struct scull_qset *` list node with given offset from the list head. It simply traverse through the list nodes and allocate memory for the list nodes if needed
+
+{%- highlight c -%}
+// scull device lazily initialize
+struct scull_qset* scull_follow(struct scull_dev *dev, int n)
+{
+	// initialize the list head if needed
+	if (!dev->data) {
+		dev->data = kzalloc(sizeof(struct scull_qset), GFP_KERNEL);
+		if (!dev->data)
+			return NULL;
+	}
+
+	struct scull_qset *target = dev->data;
+	while (n--) {
+		if (!target->next) {
+			target->next = kzalloc(sizeof(struct scull_qset), GFP_KERNEL);
+			if (!target->next)
+				return NULL;
+		}
+		target = target->next;
+	}
+	return target;
+}
+{%- endhighlight -%}
+
+
+## Test read and write
+
+`test_read_and_write.py` is a simple python script to write data to and read data from `/dev/scull0`. We can verify the successful read and write with `sudo -E python3 test_read_and_write.py both`.
+
+![test read and write](/assets/img/chapter3/test_read_and_write.png)
+
+## Notes
+- Patterns of `memset` following `kmalloc` is replaced by `kzalloc`
