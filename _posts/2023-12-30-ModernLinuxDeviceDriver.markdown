@@ -16,7 +16,7 @@ Following modern linux device driver postings will focus mainly on the code comp
 
 🔠[Chapter 3. Char Drivers]({%- post_url 2023-12-30-Chapter3 -%})
 
-🐞[Chapter 4. Debugging Techniques]
+🐞[Chapter 4. Debugging Techniques]({%- post_url 2023-12-30-Chapter4 -%})
 
 [ldd-link]: https://lwn.net/Kernel/LDD3/
 [gitlab-repo]: https://resources.oreilly.com/examples/9780596005900

@@ -6,7 +6,7 @@ categories: Chapter 2
 ---
 
 # Hello World Module
-> Entire code for Chapter 2 is available in https://github.com/kimgb415/gaby-ldd/tree/Chapter2
+> 💡 Full code in [Chapter 2][ch2]
 
 Here, we are implementing the easiest form of scull module by mimicking the one shown in the book.
 ## `main.c`
@@ -153,6 +153,6 @@ With above `Makefile`, we can execute `make` or `make clean` directly in the dir
 ## Notes
 - If modules are not built with `make` command, make sure `CONFIG_SCULL` and `CONFIG_LDD` are properly set in your `.config` file
 
-
+[ch2]: https://github.com/kimgb415/gaby-ldd/tree/Chapter2
 [kconfig]: https://github.com/torvalds/linux/blob/master/Documentation/kbuild/kconfig-language.rst
 [makefiles]: https://github.com/torvalds/linux/blob/master/Documentation/kbuild/makefiles.rst

@@ -14,7 +14,7 @@ With the above knowledge in mind, I considered the reordering of the implementat
 
 # 3.4 Char Device Registration
 
-> Full code in https://github.com/kimgb415/gaby-ldd/tree/Chapter3/Char-Device-Registration
+> 💡Full code in [Char Device Registration][3.4]
 
 ## `scull.h`
 
@@ -150,7 +150,7 @@ Note that `scull_cleanup_module` function is not marked as `__exit` anymore, sin
 
 # 3.2 Major and Minor Numbers
 
-> Full code in https://github.com/kimgb415/gaby-ldd/tree/Chapter3/Dynamic-Allocation-of-Major-Numbers
+> 💡Full code in  [Major and Minor Numbers][3.2]
 
 Scripts for module loading and unloading are almost the same with those shown in the book
 
@@ -210,7 +210,7 @@ Then we run `sudo ./scull_unload` , all stuffs are gone now
 
 # 3.5 open and release
 
-> Full code in https://github.com/kimgb415/gaby-ldd/tree/Chapter3/open-and-release
+> 💡Full code in [open and release][3.5]
 
 ## `main.c`
 
@@ -250,7 +250,7 @@ With above methods ready, we can see the debug messages in `scull_open` and `scu
 
 # 3.6 scull’s Memory Usage
 
-> Full code in https://github.com/kimgb415/gaby-ldd/tree/Chapter3/scull-Memory-Usage
+> 💡Full code in [scull’s Memory Usage][3.6] 
 
 It’s time to implement the core memory layout of scull device driver. 
 
@@ -374,7 +374,7 @@ int scull_open(struct inode *inode, struct file *filp)
 
 # 3.7 read and write
 
-> Full code in https://github.com/kimgb415/gaby-ldd/tree/Chapter3/read-and-write
+> 💡Full code in [read and write][3.7] 
 
 ## `scull_read`
 It was quite hard for me to understand the `scull_read` in the example code at first glance. It turns out `scull_read` should take care of 3 cases of read request from user space in total.
@@ -539,3 +539,10 @@ struct scull_qset* scull_follow(struct scull_dev *dev, int n)
 
 ## Notes
 - Patterns of `memset` following `kmalloc` is replaced by `kzalloc`
+
+
+[3.4]: https://github.com/kimgb415/gaby-ldd/tree/Chapter3/Char-Device-Registration
+[3.2]: https://github.com/kimgb415/gaby-ldd/tree/Chapter3/Dynamic-Allocation-of-Major-Numbers
+[3.5]: https://github.com/kimgb415/gaby-ldd/tree/Chapter3/open-and-release
+[3.6]: https://github.com/kimgb415/gaby-ldd/tree/Chapter3/scull-Memory-Usage
+[3.7]: https://github.com/kimgb415/gaby-ldd/tree/Chapter3/read-and-write

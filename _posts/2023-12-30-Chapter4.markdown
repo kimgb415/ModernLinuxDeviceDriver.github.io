@@ -1,0 +1,292 @@
+---
+layout: post
+title:  "Chapter 4. Debugging Techniques"
+date:   2023-12-30 22:32:15 +0900
+categories: Chapter 4
+---
+
+# 4.1 Debugging support in the Kernel
+
+Followings are my kernel configurations. 
+
+| CONFIGURATIONS MENTIONED IN LDD | MY SELECTION
+| `CONFIG_DEBUG_KERNEL`	| Y
+| `CONFIG_DEBUG_SLAB`	| SLAB is deprecated and replaced by SLUB. Hence, CONFIG_SLUB_DEBUG and CONFIG_SLUB_DEBUG_ON is enabled
+| `CONFIG_DEBUG_PAGEALLOC`	| Y
+| `CONFIG_DEBUG_SPINLOCK`	| Y
+| `CONFIG_DEBUG_SPINLOCK_SLEEP`	| not found
+| `CONFIG_INIT_DEBUG`	| not found
+| `CONFIG_DEBUG_INFO`	| Y
+| `CONFIG_MAGIC_SYSRQ`	| Y
+| `CONFIG_DEBUG_STACKOVERFLOW`	| N
+| `CONFIG_DEBUG_STACK_USAGE`	| Y
+| `CONFIG_KALLSYMS`	| Y (by default)
+| `CONFIG_ACPI_DEBUG`	| Y (by default)
+| `CONFIG_DEBUG_DRIVER`	| Y
+| `CONFIG_SCSI_CONSTANTS`	| Y (by default)
+| `CONFIG_INPUT_EVBUG`	| m (by default)
+| `CONFIG_PROFILING`	| Y (by default)
+
+Feel free to use my [`.config.debug`][.config] as your linux `.config`.
+
+# 4.2 Debugging by Printing
+
+> 💡 Full code in [Debugging by Printing][4.2]
+
+> ⚠️ `syslogd` is considered deprecated and largely replaced by `rsyslogd`.
+
+The way I enabling the debugging options for scull device is a bit different from the one shown in the book. As mentioned in Chapter2, I relied on the `kbuild` system.
+
+## `scull/Kconfig`
+
+boolean symbol of `CONFIG_DEBUG_SCULL` is defined in the `Kconfig` of scull directory as below.
+
+Note that both `CONFIG_DEBUG_KERNEL` and `CONFIG_SCULL` should be properly set to enable the configuration of `CONFIG_DEBUG_SCULL`
+
+{%- highlight plaintext -%}
+config SCULL
+    tristate "Scull driver by Gaby, Kim"
+    depends on LDD
+    help
+        This is scull device driver based on Linux Device Drvier, 3rd edition,
+        compatible with linux 6.7.0, Authored by Gaby, Kim.
+
+config DEBUG_SCULL
+    bool "Enable debugging features of scull driver by Gaby, Kim"
+    depends on DEBUG_KERNEL && SCULL
+    help
+        To enable debugging features of this driver, choose y here.
+{%- endhighlight -%}
+
+We can see make `menuconfig` shows the dependency of `CONFIG_DEBUG_SCULL`
+
+![menuconfig](/assets/img/chapter4/menuconfig.png)
+
+
+## `Makefile`
+When `CONFIG_DEBUG_SCULL=y`, we have to define the `SCULL_DEBUG` so that debugging related definitions in `scull.h` are activated, and this can be achieved by a simple line of `ccflags-$(CONFIG_DEBUG_SCULL)` as below.
+
+{%- highlight make -%}
+# If KERNELRELEASE is defined, we've been invoked from the
+# kernel build system and can use its language.
+ifneq ($(KERNELRELEASE),)
+	obj-$(CONFIG_SCULL) += scull.o
+	scull-y := main.o
+	ccflags-$(CONFIG_DEBUG_SCULL) := -O -g -DSCULL_DEBUG
+
+...
+{%- endhighlight -%}
+
+You can find the documents regarding `ccflags` in https://github.com/torvalds/linux/blob/master/Documentation/kbuild/makefiles.rst#compilation-flags
+
+# 4.3 Debugging by Querying
+
+> 💡 Full code in [Debugging by Querying][4.3]
+
+## `proc filesystem` without `seq_file` interface
+
+A lot of changes have been made into proc filesystem API in modern Linux kernel.
+
+- `create_proc_read_entry()` → `proc_create()`
+- `remove_proc_entry()` → `proc_remove()`
+- `struct proc_ops` is used instead of `struct file_operations` upon `/proc` file creation
+- Functions signature of new `proc_ops.proc_read()` differs a lot from the one of original `file_operations.read()`
+Other than the changes due to Linux version update, I also slightly modified some logics of `scull_read_procmem()` function
+- use `copy_to_user()` instead `sprintf()` for safe data transfer
+- scull device driver outputs the entire data always on the first `proc_ops.read` call, hence, subsequent `proc_ops.read` call will return right away since reached EOF. (This implementation is a bit hacky 😅)
+- cautiously monitor the number of bytes copying to user to prevent larger return data than the requested one
+
+{%- highlight c -%}
+/*
+ * The proc filesystem: function to read and entry
+ */
+static ssize_t scull_read_procmem(struct file *filp, char __user *buf, size_t count,  loff_t *offset)
+{
+	// we assume our scull device driver outputs the entire data always on the first proc_ops.read call
+	// subsequent proc_ops.read call indicates EOF
+	if (*offset) {
+		PDEBUG("reached EOF of scull");
+		return 0;
+	}
+
+	ssize_t len = 0, temp_len = 0;
+	for (int i = 0 ; i < scull_nr_devs && len <= count; ++i) {
+		struct scull_dev *device = &scull_devices[i];
+		if (down_interruptible(&device->sem))
+			return -ERESTARTSYS;
+
+		struct scull_qset *qset = device->data;
+		PDEBUG("[scull proc] read /dev/scull%d\n", i);
+		for (; qset && len < count; qset = qset->next) {
+			if (!qset->data)
+				continue;
+
+			for (int j = 0; j < device->qset && len <= count; ++j) {
+				if (!qset->data[j])
+					continue;
+				temp_len = min(count - len, (unsigned int)device->quantum);
+				if (copy_to_user(buf + len, qset->data[j], temp_len)) {
+					up(&device->sem);
+					return -EFAULT;
+				}
+				len += temp_len;
+			}
+		}
+		up(&device->sem);
+	}
+	*offset += len;
+	PDEBUG("[scull proc] read %ld bytes in total", len);
+
+	return len;
+}
+
+static const struct proc_ops scull_proc_fops = {
+	.proc_read = scull_read_procmem,
+};
+{%- endhighlight -%}
+
+## `proc filesystem` with `seq_file` interface
+Fortunately, `seq_file` interface didn’t change that much. Our implementation is almost the same with the one in the book
+
+{%- highlight c -%}
+static void *scull_seq_start(struct seq_file *s, loff_t *pos)
+{
+	if (*pos >= scull_nr_devs)
+		return NULL;
+	seq_printf(s, "iterate starts at /device/scull%lld\n", *pos);
+	return scull_devices + *pos;
+}
+
+static void *scull_seq_next(struct seq_file *s, void *v, loff_t *pos)
+{
+	if (*++pos >= scull_nr_devs)
+		return NULL;
+	seq_printf(s, "iterate to /device/scull%lld\n", *pos);
+	return scull_devices + *pos;
+}
+
+static int scull_seq_show(struct seq_file *s, void *v)
+{
+	struct scull_dev *device = v;
+	if (down_interruptible(&device->sem))
+		return -ERESTARTSYS;
+
+	struct scull_qset *qset = device->data;
+	for (; qset; qset = qset->next) {
+		if (!qset->data)
+			continue;
+		for (int j = 0; j < device->qset; ++j) {
+			if (!qset->data[j])
+				continue;
+			seq_printf(s, (const char *)qset->data[j]);
+		}
+	}
+
+	up(&device->sem);
+	return 0;
+}
+
+static void scull_seq_stop(struct seq_file *s, void *v)
+{
+	/* Actually, there's nothing to do here */
+}
+
+static const struct seq_operations scull_seq_ops = {
+	.start = scull_seq_start,
+	.stop = scull_seq_stop,
+	.next = scull_seq_next,
+	.show = scull_seq_show,
+};
+
+static int scull_proc_open(struct inode *inode, struct file *filp)
+{
+	return seq_open(filp, &scull_seq_ops);
+}
+
+static const struct proc_ops scull_seq_proc_ops = {
+	.proc_read = seq_read,
+	.proc_open = scull_proc_open,
+	.proc_release = seq_release,
+	.proc_lseek = seq_lseek,
+};
+{%- endhighlight -%}
+
+## `create_proc`
+With `proc_ops` ready, we can create the `/proc` files with following function calls.
+
+{%- highlight c -%}
+static void scull_create_proc(void)
+{
+	scull_proc_entry = proc_create(SCULL_PROC, 0644, NULL, &scull_proc_fops);
+	if (!scull_proc_entry)
+		PDEBUG("/proc/%s not created", SCULL_PROC);
+
+	scull_seq_proc_entry = proc_create(SCULL_SEQ_PROC, 0644, NULL, &scull_seq_proc_ops);
+	if (!scull_seq_proc_entry)
+		PDEBUG("/proc/%s not created", SCULL_SEQ_PROC);
+}
+
+static void scull_remove_proc(void)
+{
+	proc_remove(scull_proc_entry);
+	proc_remove(scull_seq_proc_entry);
+}
+{%- endhighlight -%}
+
+Don’t forget to call these functions upon module loading and unloading!
+
+{%- highlight c -%}
+void scull_cleanup_module(void)
+{
+...
+#ifdef SCULL_DEBUG
+	scull_remove_proc();
+#endif
+...
+}
+
+static int __init scull_init_module(void)
+{
+...
+#ifdef SCULL_DEBUG
+	scull_create_proc();
+#endif
+...
+}
+{%- endhighlight -%}
+
+## Test `/proc` files
+`write_and_query` is a simple shell script to write data into all `/dev/scull[0-3]` and read both `/proc/scullproc` and `/proc/scullseq`
+
+{%- highlight shell -%}
+#!/bin/sh
+device="/dev/scull"
+proc_file="/proc/scullproc"
+proc_seq="/proc/scullseq"
+
+for i in 0 1 2 3; do
+    echo "Hello from scull${i}" | sudo dd of="${device}${i}"
+done
+
+read_file() {
+    file=$1
+    if [ -e "${file}" ]; then
+        echo "read from" ${file}
+        cat ${file}
+    else
+        echo "${file} does not exit"
+    fi
+}
+
+
+read_file "${proc_file}"
+read_file "${proc_seq}"
+{%- endhighlight -%}
+
+![write_and-query result](/assets/img/chapter4/write_and_query.png)
+
+> ⚠️Remaining sections regarding other debugging techniques are not fully experimented, hence, left undocumented.
+
+[.config]: https://github.com/kimgb415/gaby-ldd/blob/Chapter4/Debugging-by-Printing/.config.debug
+[4.2]: https://github.com/kimgb415/gaby-ldd/tree/Chapter4/Debugging-by-Printing
+[4.3]: https://github.com/kimgb415/gaby-ldd/tree/Chapter4/Debugging-by-Querying
