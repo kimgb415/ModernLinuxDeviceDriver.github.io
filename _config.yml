@@ -39,6 +39,9 @@ defaults:
     values:
       image: true
 
+# Google Analytics
+google_analytics: G-G4HJK0TP9N
+
 # Exclude from processing.
 # The following items will not be processed, by default.
 # Any item listed under the `exclude:` key here will be automatically added to
