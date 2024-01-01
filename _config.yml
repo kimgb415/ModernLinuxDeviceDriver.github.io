@@ -24,7 +24,7 @@ description: >- # this means to ignore newlines until "baseurl:"
   Modern Linux Device Driver offers a comprehensive learning tool for the 'Linux Device Driver, 3rd Edition'. 
   It presents a bottom-up approach to implementing device driver code that is compatible with modern Linux systems, 
   providing an in-depth understanding for those seeking to master the art of Linux device driver development.
-baseurl: "ldd-web" # the subpath of your site, e.g. /blog
+baseurl: "/ldd-web" # the subpath of your site, e.g. /blog
 url: "https://kimgb415.github.io" # the base hostname & protocol for your site, e.g. http://example.com
 github_username:  kimgb415
 
