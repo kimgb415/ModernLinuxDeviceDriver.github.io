@@ -331,7 +331,7 @@ int scull_trim(struct scull_dev *dev)
 }
 {%- endhighlight -%}
 
-For another, `init_MUTEX` is outdated and the new API for semaphore initialization is `sema_init`. Hence, the logic in `scull_init()` is a bit different
+For another, `init_MUTEX` is deprecated now. Hence, `sema_init` should be used in `scull_init()` to initialize semaphore
 
 {%- highlight c -%}
 static int __init scull_init_module(void)
