@@ -63,7 +63,7 @@ module_exit(scull_cleanup_module);
 - Followings are the two methods I used to monitor the `printk` messages
   - `through sudo dmesg | tail command`, with `kernel.printk = 7 4 1 7` is set in `/etc/sysctl.conf`
   - default `rsyslog` rule dumps all the kernel messages into `/var/log/kern.log`, hence kernel messages can also be monitored through `cat /var/log/kern.log | tail` command
-- If you still can’t see the `printk` messages or the messages seem delayed, you might have forget the `\n` character. https://unix.stackexchange.com/questions/167655/module-prints-to-kernel-log-with-delay
+- If you still can’t see the `printk` messages or the messages seem delayed, you might have forget the `\n` character. <https://unix.stackexchange.com/questions/167655/module-prints-to-kernel-log-with-delay>
 
 
 # Modern Linux `kbuild`

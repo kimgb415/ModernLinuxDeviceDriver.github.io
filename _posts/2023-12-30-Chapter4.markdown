@@ -77,7 +77,7 @@ ifneq ($(KERNELRELEASE),)
 ...
 {%- endhighlight -%}
 
-You can find the documents regarding `ccflags` in https://github.com/torvalds/linux/blob/master/Documentation/kbuild/makefiles.rst#compilation-flags
+You can find the documents regarding `ccflags` in <https://github.com/torvalds/linux/blob/master/Documentation/kbuild/makefiles.rst#compilation-flags>
 
 # 4.3 Debugging by Querying
 
