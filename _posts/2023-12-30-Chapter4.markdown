@@ -5,9 +5,11 @@ date:   2023-12-30 22:32:15 +0900
 categories: Chapter 4
 ---
 
+> ⚠️ `syslogd` is considered deprecated and largely replaced by `rsyslogd`.
+
 # 4.1 Debugging support in the Kernel
 
-Followings are my kernel configurations. 
+A lot of debugging related kernel configurations are introduced in the book. And followings are my kernel configurations. 
 
 | CONFIGURATIONS MENTIONED IN LDD | MY SELECTION
 | `CONFIG_DEBUG_KERNEL`	| Y
@@ -27,19 +29,18 @@ Followings are my kernel configurations.
 | `CONFIG_INPUT_EVBUG`	| m (by default)
 | `CONFIG_PROFILING`	| Y (by default)
 
-Feel free to use my [`.config.debug`][.config] as your linux `.config`.
+Please feel free to use [`.config.debug`][.config] as your linux `.config`.
 
 # 4.2 Debugging by Printing
 
 > 💡 Full code in [Debugging by Printing][4.2]
 
-> ⚠️ `syslogd` is considered deprecated and largely replaced by `rsyslogd`.
 
-The way I enabling the debugging options for scull device is a bit different from the one shown in the book. As mentioned in Chapter2, I relied on the `kbuild` system.
+The way I enable the debugging options for scull device is a bit different from the one shown in the book. As mentioned in Chapter2, it relies on the `kbuild` system.
 
 ## `scull/Kconfig`
 
-boolean symbol of `CONFIG_DEBUG_SCULL` is defined in the `Kconfig` of scull directory as below.
+Boolean symbol of `CONFIG_DEBUG_SCULL` is defined in the `Kconfig` of scull directory as below.
 
 Note that both `CONFIG_DEBUG_KERNEL` and `CONFIG_SCULL` should be properly set to enable the configuration of `CONFIG_DEBUG_SCULL`
 
@@ -58,13 +59,13 @@ config DEBUG_SCULL
         To enable debugging features of this driver, choose y here.
 {%- endhighlight -%}
 
-We can see make `menuconfig` shows the dependency of `CONFIG_DEBUG_SCULL`
+We can see that `make menuconfig` shows the required dependencies to set `CONFIG_DEBUG_SCULL`.
 
 ![menuconfig]({{ "/assets/img/chapter4/menuconfig.png" | prepend: site.baseurl }})
 
 
 ## `Makefile`
-When `CONFIG_DEBUG_SCULL=y`, we have to define the `SCULL_DEBUG` so that debugging related definitions in `scull.h` are activated, and this can be achieved by a simple line of `ccflags-$(CONFIG_DEBUG_SCULL)` as below.
+When `CONFIG_DEBUG_SCULL=y`, we have to define the `SCULL_DEBUG` so that debugging macros in `scull.h` are activated. It can be done by a simple line of `ccflags-$(CONFIG_DEBUG_SCULL)` in `Makefile`.
 
 {%- highlight make -%}
 # If KERNELRELEASE is defined, we've been invoked from the
@@ -79,6 +80,27 @@ ifneq ($(KERNELRELEASE),)
 
 You can find the documents regarding `ccflags` in <https://github.com/torvalds/linux/blob/master/Documentation/kbuild/makefiles.rst#compilation-flags>
 
+## `scull.h`
+With the `SCULL_DEBUG` defined, debugging macros in `scull.h` will be defined upon pre-processing. Note, the `PDEBUG` is modified so that it also prints out the name of the function through `__func__` for verbose debugging messages.
+
+{%- highlight c -%}
+/*
+ * Macros to help debugging
+ */
+#undef PDEBUG             /* undef it, just in case */
+#ifdef SCULL_DEBUG
+#  ifdef __KERNEL__
+     /* This one if debugging is on, and kernel space */
+#    define PDEBUG(fmt, args...) printk( KERN_DEBUG "scull: [%s] " fmt, __func__, ## args)
+#  else
+     /* This one for user space */
+#    define PDEBUG(fmt, args...) fprintf(stderr, "[%s] " fmt, __func__, ## args)
+#  endif
+#else
+#  define PDEBUG(fmt, args...) /* not debugging: nothing */
+#endif
+{%- endhighlight -%}
+
 # 4.3 Debugging by Querying
 
 > 💡 Full code in [Debugging by Querying][4.3]
@@ -87,14 +109,56 @@ You can find the documents regarding `ccflags` in <https://github.com/torvalds/l
 
 A lot of changes have been made into proc filesystem API in modern Linux kernel.
 
-- `create_proc_read_entry()` → `proc_create()`
-- `remove_proc_entry()` → `proc_remove()`
-- `struct proc_ops` is used instead of `struct file_operations` upon `/proc` file creation
-- Functions signature of new `proc_ops.proc_read()` differs a lot from the one of original `file_operations.read()`
-Other than the changes due to Linux version update, I also slightly modified some logics of `scull_read_procmem()` function
+- `create_proc_read_entry()` is replaced with `proc_create()`.
+- `remove_proc_entry()` is replaced with `proc_remove()`.
+- `struct proc_ops` is used instead of `struct file_operations` upon `/proc` file creation.
+- Function signature of new `proc_ops.proc_read()` differs a lot from the one of original `file_operations.read()`.
+
+Other than the changes due to Linux version update, I also slightly refactored some logics of `scull_read_procmem()`.
 - use `copy_to_user()` instead `sprintf()` for safe data transfer
-- scull device driver outputs the entire data always on the first `proc_ops.read` call, hence, subsequent `proc_ops.read` call will return right away since reached EOF. (This implementation is a bit hacky 😅)
-- cautiously monitor the number of bytes copying to user to prevent larger return data than the requested one
+- `scull_read_procmem` returns at most one quantum of data at a time, just like the `scull_read`.
+- cautiously monitor the number of bytes copying to user to prevent larger return data than the requested one.
+
+Since the way `scull_read_procmem` delivers the data to user is much of the same with the one of `scull_read`, code in original `scull_read` has been refactored into `scull_read_util` to minimize the code duplication.
+
+{%- highlight c -%}
+ssize_t scull_read_util(struct scull_dev* dev, char __user *buf, size_t count, loff_t *f_pos)
+{
+	PDEBUG("called with count: %lu, f_pos: %lld\n", count, *f_pos);
+	// case 1. offset is alreay beyond EOF
+	if (*f_pos >= dev->size)
+		return 0;
+	
+	// case 2. offset is within EOF, while offset + count is beyond EOF
+	if (*f_pos + count > dev->size)
+		count = dev->size - *f_pos;
+
+	// case 3. offset + count is within EOF, look for the target quantum to copy to user space
+	int list_node_size = dev->qset * dev->quantum;
+	// locate the q_set list node
+	int qset_pointer_offset = *f_pos / list_node_size;
+	struct scull_qset *target = scull_follow(dev, qset_pointer_offset);
+
+	// then the quantum pointer, finally pinpoint the f_pos within the quantum
+	int quantum_pointer_offset = (*f_pos % list_node_size) / dev->quantum;
+	int quantum_offset = (*f_pos % list_node_size) % dev->quantum;
+	
+	if (!target || !target->data || !target->data[quantum_pointer_offset])
+		return 0;
+
+	// read only up to the end of this quantum
+	count = min(count, (size_t)dev->quantum - quantum_offset);
+	if (copy_to_user(buf, target->data[quantum_pointer_offset] + quantum_offset, count))
+		return -EFAULT;
+
+	*f_pos += count;
+	PDEBUG("read %lu bytes\n", count);
+
+	return count;
+}
+{%- endhighlight -%}
+
+Our `scull_read_procmem` simply loops through all the devices and transmits all internal contents until the EOF of last scull device.
 
 {%- highlight c -%}
 /*
@@ -102,40 +166,30 @@ Other than the changes due to Linux version update, I also slightly modified som
  */
 static ssize_t scull_read_procmem(struct file *filp, char __user *buf, size_t count,  loff_t *offset)
 {
-	// we assume our scull device driver outputs the entire data always on the first proc_ops.read call
-	// subsequent proc_ops.read call indicates EOF
-	if (*offset) {
-		PDEBUG("reached EOF of scull");
-		return 0;
-	}
-
-	ssize_t len = 0, temp_len = 0;
+	PDEBUG("called with count: %lu, offset: %lld\n", count, *offset);
+	loff_t device_offset = *offset;
+	ssize_t len = 0;
 	for (int i = 0 ; i < scull_nr_devs && len <= count; ++i) {
 		struct scull_dev *device = &scull_devices[i];
 		if (down_interruptible(&device->sem))
 			return -ERESTARTSYS;
 
-		struct scull_qset *qset = device->data;
-		PDEBUG("[scull proc] read /dev/scull%d\n", i);
-		for (; qset && len < count; qset = qset->next) {
-			if (!qset->data)
-				continue;
+		// skip to next device if needed
+		if (device_offset >= device->size) {
+			device_offset -= device->size;
+			up(&device->sem);
+			continue;
+		}
 
-			for (int j = 0; j < device->qset && len <= count; ++j) {
-				if (!qset->data[j])
-					continue;
-				temp_len = min(count - len, (unsigned int)device->quantum);
-				if (copy_to_user(buf + len, qset->data[j], temp_len)) {
-					up(&device->sem);
-					return -EFAULT;
-				}
-				len += temp_len;
-			}
+		len = scull_read_util(device, buf, count, &device_offset);
+		// scull_read_util might return -EFAULT
+		if (len >= 0) {
+			*offset += len;
+			PDEBUG("read %ld bytes in total", len);
 		}
 		up(&device->sem);
+		break;
 	}
-	*offset += len;
-	PDEBUG("[scull proc] read %ld bytes in total", len);
 
 	return len;
 }
@@ -145,8 +199,29 @@ static const struct proc_ops scull_proc_fops = {
 };
 {%- endhighlight -%}
 
+FYI, the refactored version of `scull_read` is as follows.
+
+{%- highlight c -%}
+ssize_t scull_read(struct file *filp, char __user *buf, size_t count, loff_t *f_pos)
+{
+	ssize_t retval = 0;
+	struct scull_dev *dev = filp->private_data;
+
+	if (down_interruptible(&dev->sem))
+		return -ERESTARTSYS;
+
+	retval = scull_read_util(dev, buf, count, f_pos);
+
+	up(&dev->sem);
+	PDEBUG( "read %ld bytes from scull device", retval);
+
+	return retval;
+}
+{%- endhighlight -%}
+
+
 ## `proc filesystem` with `seq_file` interface
-Fortunately, `seq_file` interface didn’t change that much. Our implementation is almost the same with the one in the book
+Fortunately, `seq_file` interface didn’t change that much. Our implementation is almost the same with the one in the book.
 
 {%- highlight c -%}
 static void *scull_seq_start(struct seq_file *s, loff_t *pos)
@@ -211,8 +286,8 @@ static const struct proc_ops scull_seq_proc_ops = {
 };
 {%- endhighlight -%}
 
-## `create_proc`
-With `proc_ops` ready, we can create the `/proc` files with following function calls.
+
+With `proc_ops` ready, we can now create or remove the `/proc` files with following function calls.
 
 {%- highlight c -%}
 static void scull_create_proc(void)
