@@ -110,7 +110,7 @@ endmenu
 
 After all the above `Kconfig`s are set, you will be able to find and change the configuration symbols in `make menuconfig` as below
 
-![make menuconfig](/assets/img/chapter2/menuconfig.png)
+![make menuconfig]({{ "/assets/img/chapter2/menuconfig.png" | prepend: site.baseurl }})
 
 ## `Makefile`
 We are now ready to implement the `Makefile`, and it looks quiet different from the one shown in the book

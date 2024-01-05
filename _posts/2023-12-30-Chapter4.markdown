@@ -60,7 +60,7 @@ config DEBUG_SCULL
 
 We can see make `menuconfig` shows the dependency of `CONFIG_DEBUG_SCULL`
 
-![menuconfig](/assets/img/chapter4/menuconfig.png)
+![menuconfig]({{ "/assets/img/chapter4/menuconfig.png" | prepend: site.baseurl }})
 
 
 ## `Makefile`
@@ -283,7 +283,7 @@ read_file "${proc_file}"
 read_file "${proc_seq}"
 {%- endhighlight -%}
 
-![write_and-query result](/assets/img/chapter4/write_and_query.png)
+![write_and-query result]({{ "/assets/img/chapter4/write_and_query.png" | prepend: site.baseurl }})
 
 > ⚠️Remaining sections regarding other debugging techniques are not fully experimented, hence, left undocumented.
 

@@ -202,11 +202,11 @@ rm -f /dev/${device} /dev/${device}[0-3]
 
 When we run `make && sudo ./scull_load` , we will see the driver modules has been inserted and the devices are created.
 
-![lsmod after scull_load](/assets/img/chapter3/lsmod.png)
+![lsmod after scull_load]({{ "/assets/img/chapter3/lsmod.png" | prepend: site.baseurl }})
 
 Then we run `sudo ./scull_unload` , all stuffs are gone now
 
-![scull_unload](/assets/img/chapter3/unload.png)
+![scull_unload]({{ "/assets/img/chapter3/unload.png" | prepend: site.baseurl }})
 
 # 3.5 open and release
 
@@ -370,7 +370,7 @@ int scull_open(struct inode *inode, struct file *filp)
 }
 {%- endhighlight -%}
 
-![O_WRONLY test](/assets/img/chapter3/O_WRONLY.png)
+![O_WRONLY test]({{ "/assets/img/chapter3/O_WRONLY.png" | prepend: site.baseurl }})
 
 # 3.7 read and write
 
@@ -386,7 +386,7 @@ Case 2 and 3 are the ones user can actually read something from our scull device
 
 Another thing I struggled is to how to reach the target quantum from `loff_t *f_pos`. Here is the visualization example of retrieving the target quantum 
 
-![scull memory visualization](/assets/img/chapter3/visualization.png)
+![scull memory visualization]({{ "/assets/img/chapter3/visualization.png" | prepend: site.baseurl }})
 
 With all the details above, hope it is better to understand the following `scull_read`.
 
@@ -535,7 +535,7 @@ struct scull_qset* scull_follow(struct scull_dev *dev, int n)
 
 `test_read_and_write.py` is a simple python script to write data to and read data from `/dev/scull0`. We can verify the successful read and write with `sudo -E python3 test_read_and_write.py both`.
 
-![test read and write](/assets/img/chapter3/test_read_and_write.png)
+![test read and write]({{ "/assets/img/chapter3/test_read_and_write.png" | prepend: site.baseurl }})
 
 ## Notes
 - Patterns of `memset` following `kmalloc` is replaced by `kzalloc`
