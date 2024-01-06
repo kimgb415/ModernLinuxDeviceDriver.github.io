@@ -1,0 +1,159 @@
+---
+layout: post
+title:  "Chapter 5. Concurrency And Race Conditions"
+date:   2024-01-04 19:46:21 +0900 
+categories: Chapter 5
+---
+
+## 5.1 Pitfalls in scull
+> 💡Full code in <https://github.com/kimgb415/modern-linux-device-driver/tree/Chapter5/Pitfalls-In-scull>
+
+### `kmemleak`
+Before we mess up the kernel memory, let's setup `kmemleak` tool to detect kernel memory leaks. 
+1. Follow descriptions in <https://github.com/torvalds/linux/blob/master/Documentation/dev-tools/kmemleak.rst> to enable the `kmemleak` tool.
+2. Make sure the `debugfs` is mounted to use the debugging filesystem. If nothing shows up upon `mount | grep debugfs`, execute `mount -t debugfs nodev /sys/kernel/debug/`.
+
+### Simulate the memory leak
+We have already implemented the semaphore and properly locked our critical regions in Chapter3. To simulate the race condition upon `scull_write`, let us temporarily remove the locking mechanism for now.
+
+{%- highlight c -%}
+
+ssize_t scull_write(struct file *filp, const char __user *buf, size_t count, loff_t *f_pos)
+{
+    ...
+	// if (down_interruptible(&dev->sem))
+	// 	return ERESTARTSYS;
+    ...
+
+done:
+	// up(&dev->sem);
+    ...
+}
+{%- endhighlight -%}
+
+`multithread_write.py` is a python script that spawns threads, where each thread writes 512MB data into `/dev/scull0`. Let's see if we can simulate the memory leak caused by the race condition upon memory allocation, as introduced in the book. 
+1. Run the `multithread_write.py` few times.
+> ⚠️ Some of the threads spawned by `multithread_write.py` might fail to complete writing due to the memory allocation error, complaining `OSError: [Errno 12] Cannot allocate memory`, which barely happens when locking mechanism is on.
+2. Trigger the scan of `kmemleak` through `echo scan > /sys/kernel/debug/kmemleak`.
+> 💡Switch to root before the execution. For another, scanning might take a while to complete. Kernel will log the message regarding the detection of new memory leak, which can be seen in `dmesg` or `/var/log/kern.log`. 
+![notification of new memory leak]({{'/assets/img/chapter5/new_memory_leak.png' | prepend: site.baseurl}})
+3. Monitor the report of `kmemleak` through `cat /sys/kernel/debug/kmemleak`.
+
+Boom! Memory leaks indeed occurred, originating from the program whose name is `python3`. It's clear which script is responsible for the whole mess😉
+![report of memory leak]({{'/assets/img/chapter5/memory_leak_report.png' | prepend: site.baseurl}})
+
+
+If we turn the locking back on and run it again, we won't see any report of memory leak no matter how many time we run the script.
+
+> 💡With locking mechanism back on, it takes much more time to complete the execution of the script.
+
+
+## 5.4 Completions
+> 💡Full code in <https://github.com/kimgb415/modern-linux-device-driver/tree/Chapter5/Completions>
+
+### `misc_load` and `misc_unload` for miscellaneous modules
+These shell scripts are quite similar with the ones for scull device with two tiny differences.
+1. One and only argument is required to specify the module to load or unload.
+2. Only one corresponding device node will be created or removed.
+
+`misc_load`
+
+{%- highlight shell -%}
+#!/bin/sh
+module="$1"
+device="$1"
+mode="664"
+
+# invoke insmod 
+# if insmod fails, the script will exit with error code of 1
+/sbin/insmod ./$module.ko || exit 1
+
+rm -rf /dev/${device}
+
+# use awk to retrive the major number
+# from the line where the second field equals to out module name
+major=$(awk "\$2==\"$module\" {print \$1}" /proc/devices)
+
+# create only one device node
+mknod /dev/${device} c $major 0
+
+group="staff"
+grep -q "^staff:" /etc/group || group="wheel"
+
+# since this script must be run by root
+chgrp $group /dev/${device}
+chmod $mode /dev/${device}
+{%- endhighlight -%}
+
+`misc_unload`
+
+{%- highlight shell -%}
+
+#!/bin/sh
+module="$1"
+device="$1"
+
+# invoke rmmod 
+/sbin/rmmod $module || exit 1
+
+# Remove stale nodes
+rm -f /dev/${device} /dev/${device}
+
+{%- endhighlight -%}
+
+
+### `complete` module
+Module to test the completion is quite simple and almost the same with the one in the book. 
+
+`complete_read`
+- When a user process attempts to read the complete char device, the driver simply puts it into sleep.
+- If awaken, the driver will notify the user process with a simple message.
+- Following read system calls from the same user process will receive EOF.
+{%- highlight c -%}
+ssize_t complete_read(struct file *filp, char __user *buf, size_t count, loff_t* offset)
+{
+    // Alawys signal EOF after the first read 
+    if (*offset)
+        return 0;
+
+    MDEBUG("Process %i (%s) going to sleep\n", current->pid, current->comm);
+    if (wait_for_completion_interruptible(&comp))
+        return -ERESTARTSYS;
+
+    MDEBUG("Awoken process %is (%s)\n", current->pid, current->comm);
+
+    char temp[50] = "Writer finally worte something\n";
+    if (copy_to_user(buf, temp, sizeof(temp)))
+        return -EFAULT;
+
+    *offset += sizeof(temp);
+
+    return sizeof(temp);
+}
+{%- endhighlight -%}
+
+`complete_write`
+Whenever a user process finally writes to the device, those sleeping reader processes will be awakened.
+
+{%- highlight c -%}
+ssize_t complete_write(struct file *filp, char __user *buf, size_t count, loff_t* offset)
+{
+    MDEBUG("Process %i %s awakening the readers...\n", current->pid, current->comm);
+    complete(&comp);
+
+    return count;
+}
+{%- endhighlight -%}
+
+#### Test `complete.ko`
+1. `cat /dev/complete` will hang once executed.
+![reader process sleeps]({{'/assets/img/chapter5/read_sleep.png' | prepend: site.baseurl}})
+2. Execute `echo hello | sudo dd of=/dev/complete` to write to the device.
+3. The reader process is awaken with the log message
+![reader process awaken]({{'/assets/img/chapter5/completed.png' | prepend: site.baseurl}})
+
+
+## 5.6 Locking Traps
+Quick note of this section is that our implementation till now adheres to the locking rule, where internal static functions always assume functions called from outside have already taken care of the proper locking. So far, we have two internal functions follow this rule.
+- `scull_read_util`
+- `scull_follow`
