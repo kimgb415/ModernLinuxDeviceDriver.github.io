@@ -5,11 +5,11 @@ date:   2023-12-30 22:32:15 +0900
 categories: Chapter 2
 ---
 
-# Hello World Module
+## Hello World Module
 > 💡 Full code in [Chapter 2][ch2]
 
 Here, we are implementing the easiest form of scull module by mimicking the one shown in the book.
-## `main.c`
+### `main.c`
 {% highlight c %}
 /*
  * Gaby Kim -- Linux Device Driver with linux 6.7.0
@@ -58,7 +58,7 @@ module_init(scull_init_module);
 module_exit(scull_cleanup_module);
 {% endhighlight %}
 
-## Notes
+### Notes
 - `scull_clean_up` function is marked `__exit` here, since it is only called during `module_exit` 
 - Followings are the two methods I used to monitor the `printk` messages
   - `through sudo dmesg | tail command`, with `kernel.printk = 7 4 1 7` is set in `/etc/sysctl.conf`
@@ -66,14 +66,14 @@ module_exit(scull_cleanup_module);
 - If you still can’t see the `printk` messages or the messages seem delayed, you might have forget the `\n` character. <https://unix.stackexchange.com/questions/167655/module-prints-to-kernel-log-with-delay>
 
 
-# Modern Linux `kbuild`
+## Modern Linux `kbuild`
 
 Now comes the fun part regarding Makefile. Modern Linux kernel has a more complex build system called `kbuild`. References for the related documents are as below.
 
 - [Linux Kconfig Languages][kconfig]
 - [Linux makefiles][makefiles]
 
-## `Kconfig`
+### `Kconfig`
 
 There are three `Kconfig` files in total to make our device driver into a loadable module of the Linux source tree.
 
@@ -112,7 +112,7 @@ After all the above `Kconfig`s are set, you will be able to find and change the 
 
 ![make menuconfig]({{ "/assets/img/chapter2/menuconfig.png" | prepend: site.baseurl }})
 
-## `Makefile`
+### `Makefile`
 We are now ready to implement the `Makefile`, and it looks quiet different from the one shown in the book
 
 {% highlight make %}
@@ -150,7 +150,7 @@ With above `Makefile`, we can execute `make` or `make clean` directly in the dir
 
 > I have tested the `Makefile` shown in the book and it also worked. However, codes from now on are all made through the modern `kbuild` system.
 
-## Notes
+### Notes
 - If modules are not built with `make` command, make sure `CONFIG_SCULL` and `CONFIG_LDD` are properly set in your `.config` file
 
 [ch2]: https://github.com/kimgb415/gaby-ldd/tree/Chapter2

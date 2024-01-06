@@ -7,7 +7,7 @@ categories: Chapter 4
 
 > ⚠️ `syslogd` is considered deprecated and largely replaced by `rsyslogd`.
 
-# 4.1 Debugging support in the Kernel
+## 4.1 Debugging support in the Kernel
 
 A lot of debugging related kernel configurations are introduced in the book. And followings are my kernel configurations. 
 
@@ -31,14 +31,14 @@ A lot of debugging related kernel configurations are introduced in the book. And
 
 Please feel free to use [`.config.debug`][.config] as your linux `.config`.
 
-# 4.2 Debugging by Printing
+## 4.2 Debugging by Printing
 
 > 💡 Full code in [Debugging by Printing][4.2]
 
 
 The way I enable the debugging options for scull device is a bit different from the one shown in the book. As mentioned in Chapter2, it relies on the `kbuild` system.
 
-## `scull/Kconfig`
+### `scull/Kconfig`
 
 Boolean symbol of `CONFIG_DEBUG_SCULL` is defined in the `Kconfig` of scull directory as below.
 
@@ -64,7 +64,7 @@ We can see that `make menuconfig` shows the required dependencies to set `CONFIG
 ![menuconfig]({{ "/assets/img/chapter4/menuconfig.png" | prepend: site.baseurl }})
 
 
-## `Makefile`
+### `Makefile`
 When `CONFIG_DEBUG_SCULL=y`, we have to define the `SCULL_DEBUG` so that debugging macros in `scull.h` are activated. It can be done by a simple line of `ccflags-$(CONFIG_DEBUG_SCULL)` in `Makefile`.
 
 {%- highlight make -%}
@@ -80,7 +80,7 @@ ifneq ($(KERNELRELEASE),)
 
 You can find the documents regarding `ccflags` in <https://github.com/torvalds/linux/blob/master/Documentation/kbuild/makefiles.rst#compilation-flags>
 
-## `scull.h`
+### `scull.h`
 With the `SCULL_DEBUG` defined, debugging macros in `scull.h` will be defined upon pre-processing. Note, the `PDEBUG` is modified so that it also prints out the name of the function through `__func__` for verbose debugging messages.
 
 {%- highlight c -%}
@@ -101,11 +101,11 @@ With the `SCULL_DEBUG` defined, debugging macros in `scull.h` will be defined up
 #endif
 {%- endhighlight -%}
 
-# 4.3 Debugging by Querying
+## 4.3 Debugging by Querying
 
 > 💡 Full code in [Debugging by Querying][4.3]
 
-## `proc filesystem` without `seq_file` interface
+### `proc filesystem` without `seq_file` interface
 
 A lot of changes have been made into proc filesystem API in modern Linux kernel.
 
@@ -220,7 +220,7 @@ ssize_t scull_read(struct file *filp, char __user *buf, size_t count, loff_t *f_
 {%- endhighlight -%}
 
 
-## `proc filesystem` with `seq_file` interface
+### `proc filesystem` with `seq_file` interface
 Fortunately, `seq_file` interface didn’t change that much. Our implementation is almost the same with the one in the book.
 
 {%- highlight c -%}
@@ -330,7 +330,7 @@ static int __init scull_init_module(void)
 }
 {%- endhighlight -%}
 
-## Test `/proc` files
+### Test `/proc` files
 `write_and_query` is a simple shell script to write data into all `/dev/scull[0-3]` and read both `/proc/scullproc` and `/proc/scullseq`
 
 {%- highlight shell -%}
