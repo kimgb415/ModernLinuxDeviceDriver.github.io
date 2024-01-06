@@ -12,11 +12,13 @@ Following modern linux device driver postings will focus mainly on the code comp
 
 > All source codes are written and tested based on Linux kernel 6.7.0-rc1
 
-🛫[Chapter 2. Building And Running Modules]({% post_url 2023-12-30-Chapter2 %})
+🛫[Chapter 2. Building And Running Modules]({{site.baseurl}}{% post_url 2023-12-30-Chapter2 %})
 
-🔠[Chapter 3. Char Drivers]({%- post_url 2023-12-30-Chapter3 -%})
+🔠[Chapter 3. Char Drivers]({{site.baseurl}}{%- post_url 2023-12-30-Chapter3 -%})
 
-🐞[Chapter 4. Debugging Techniques]({%- post_url 2023-12-30-Chapter4 -%})
+🐞[Chapter 4. Debugging Techniques]({{site.baseurl}}{%- post_url 2023-12-30-Chapter4 -%})
+
+🏎️[Chapter 5. Concurrency And Race Conditions]({{site.baseurl}}{%- post_url 2024-01-04-Chapter5 -%})
 
 [ldd-link]: https://lwn.net/Kernel/LDD3/
 [gitlab-repo]: https://resources.oreilly.com/examples/9780596005900
