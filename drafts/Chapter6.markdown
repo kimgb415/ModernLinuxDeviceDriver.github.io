@@ -1,0 +1,258 @@
+---
+layout: post
+title:  "Chapter 6. Advanced Char Drivers"
+date:   
+categories: Chapter 6
+---
+
+
+## 6.1 ioctl
+
+> 💡Full code in <https://github.com/kimgb415/modern-linux-device-driver/tree/Chapter6/ioctl>.
+
+> ⚠️ `scull_pipe` realted ioctl commands are excluded for now.
+
+### `scull.h`
+I have refactored the way ioctl methods are defined in the header file. `enum SCULL_IOC_ENUM` is declared to automatically track the indices for each ioctl command. 
+
+
+{%- highlight c -%}
+enum SCULL_IOC_ENUM {
+	SCULL_IOCRESET_IDX,
+	SCULL_IOCSQUANTUM_IDX,
+	SCULL_IOCSQSET_IDX,
+	SCULL_IOCTQUANTUM_IDX,
+	SCULL_IOCTQSET_IDX,
+	SCULL_IOCGQUANTUM_IDX,
+	SCULL_IOCGQSET_IDX,
+	SCULL_IOCQQUANTUM_IDX,
+	SCULL_IOCQQSET_IDX,
+	SCULL_IOCXQUANTUM_IDX,
+	SCULL_IOCXQSET_IDX,
+	SCULL_IOCHQUANTUM_IDX,
+	SCULL_IOCHQSET_IDX,
+
+	SCULL_IOC_MAXNR
+};
+{%- endhighlight -%}
+
+And all second arguments for ioctl declaration macros are passed with the corresponding enum value. I consider this approach more appropriate, since the maximum number of ioctl calls might change.
+
+{%- highlight c -%}
+#define SCULL_IOCRESET    _IO(SCULL_IOC_MAGIC, SCULL_IOCRESET_IDX)
+
+/*
+ * S means "Set" through a ptr,
+ * T means "Tell" directly with the argument value
+ * G means "Get": reply by setting through a pointer
+ * Q means "Query": response is on the return value
+ * X means "eXchange": switch G and S atomically
+ * H means "sHift": switch T and Q atomically
+ */
+#define SCULL_IOCSQUANTUM _IOW(SCULL_IOC_MAGIC, SCULL_IOCSQUANTUM_IDX, int)
+#define SCULL_IOCSQSET    _IOW(SCULL_IOC_MAGIC, SCULL_IOCSQSET_IDX, int)
+#define SCULL_IOCTQUANTUM _IO(SCULL_IOC_MAGIC,  SCULL_IOCTQUANTUM_IDX)
+#define SCULL_IOCTQSET    _IO(SCULL_IOC_MAGIC,  SCULL_IOCTQSET_IDX)
+#define SCULL_IOCGQUANTUM _IOR(SCULL_IOC_MAGIC, SCULL_IOCGQUANTUM_IDX, int)
+#define SCULL_IOCGQSET    _IOR(SCULL_IOC_MAGIC, SCULL_IOCGQSET_IDX, int)
+#define SCULL_IOCQQUANTUM _IO(SCULL_IOC_MAGIC,  SCULL_IOCQQUANTUM_IDX)
+#define SCULL_IOCQQSET    _IO(SCULL_IOC_MAGIC,  SCULL_IOCQQSET_IDX)
+#define SCULL_IOCXQUANTUM _IOWR(SCULL_IOC_MAGIC,SCULL_IOCXQUANTUM_IDX, int)
+#define SCULL_IOCXQSET    _IOWR(SCULL_IOC_MAGIC,SCULL_IOCXQSET_IDX, int)
+#define SCULL_IOCHQUANTUM _IO(SCULL_IOC_MAGIC,  SCULL_IOCHQUANTUM_IDX)
+#define SCULL_IOCHQSET    _IO(SCULL_IOC_MAGIC,  SCULL_IOCHQSET_IDX)
+{%- endhighlight -%}
+
+### `main.c`
+Function signature of `access_ok` has changed so that it no more differentiates the direction of data access. It only requires `addr` and `size` as arguments.
+
+{%- highlight c -%}
+static inline int __access_ok(const void __user *ptr, unsigned long size);
+{%- endhighlight -%}
+
+Hence, the code that validates the user address is simplified to a single `if` statement.
+
+{%- highlight c -%}
+if (!access_ok((void __user *)arg, _IOC_SIZE(cmd)))
+    return -EFAULT;
+{%- endhighlight -%}
+
+For another, the `ioctl`-related member field for `file_operations` has changed from `.ioctl` to `.unlocked_ioctl`. `.unlocked_ioctl` is introduced to replace the original `.ioctl` to address the bottleneck issue of `Big Kernel Lock`, while leaving the responsibility of proper locking to driver developer.
+
+{%- highlight c -%}
+struct file_operations scull_fops = {
+	.owner = THIS_MODULE,
+	.open = scull_open,
+	.release = scull_release,
+	.read = scull_read,
+	.write = scull_write,
+	.unlocked_ioctl = scull_ioctl,
+};
+{%- endhighlight -%}
+
+The implementation of `unlocked_ioctl` is very much the same as the one in  original example code.
+
+> ⚠️ Note the signature of `unloced_ioctl` is `long (*) (struct file *,unsigned long, unsigned long)`.
+
+{%- highlight c -%}
+long scull_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
+{
+	/*
+	 * extract the type and number bitfields, and don't decode
+	 * wrong cmds: return ENOTTY (inappropriate ioctl) before access_ok()
+	 */
+	if (_IOC_TYPE(cmd) != SCULL_IOC_MAGIC) return -ENOTTY;
+	if (_IOC_NR(cmd) > SCULL_IOC_MAXNR) return -ENOTTY;
+
+	if (!access_ok((void __user *)arg, _IOC_SIZE(cmd)))
+		return -EFAULT;
+
+	int retval = 0, tmp;
+	switch(cmd) {
+
+	  case SCULL_IOCRESET:
+		scull_quantum = SCULL_QUANTUM;
+		scull_qset = SCULL_QSET;
+		break;
+        
+	  case SCULL_IOCSQUANTUM: /* Set: arg points to the value */
+		if (! capable (CAP_SYS_ADMIN))
+			return -EPERM;
+		retval = __get_user(scull_quantum, (int __user *)arg);
+		break;
+
+	  case SCULL_IOCTQUANTUM: /* Tell: arg is the value */
+		if (! capable (CAP_SYS_ADMIN))
+			return -EPERM;
+		scull_quantum = arg;
+		break;
+
+	  case SCULL_IOCGQUANTUM: /* Get: arg is pointer to result */
+		retval = __put_user(scull_quantum, (int __user *)arg);
+		break;
+
+	  case SCULL_IOCQQUANTUM: /* Query: return it (it's positive) */
+		return scull_quantum;
+
+	  case SCULL_IOCXQUANTUM: /* eXchange: use arg as pointer */
+		if (! capable (CAP_SYS_ADMIN))
+			return -EPERM;
+		tmp = scull_quantum;
+		retval = __get_user(scull_quantum, (int __user *)arg);
+		if (retval == 0)
+			retval = __put_user(tmp, (int __user *)arg);
+		break;
+
+	  case SCULL_IOCHQUANTUM: /* sHift: like Tell + Query */
+		if (! capable (CAP_SYS_ADMIN))
+			return -EPERM;
+		tmp = scull_quantum;
+		scull_quantum = arg;
+		return tmp;
+        
+	  case SCULL_IOCSQSET:
+		if (! capable (CAP_SYS_ADMIN))
+			return -EPERM;
+		retval = __get_user(scull_qset, (int __user *)arg);
+		break;
+
+	  case SCULL_IOCTQSET:
+		if (! capable (CAP_SYS_ADMIN))
+			return -EPERM;
+		scull_qset = arg;
+		break;
+
+	  case SCULL_IOCGQSET:
+		retval = __put_user(scull_qset, (int __user *)arg);
+		break;
+
+	  case SCULL_IOCQQSET:
+		return scull_qset;
+
+	  case SCULL_IOCXQSET:
+		if (! capable (CAP_SYS_ADMIN))
+			return -EPERM;
+		tmp = scull_qset;
+		retval = __get_user(scull_qset, (int __user *)arg);
+		if (retval == 0)
+			retval = put_user(tmp, (int __user *)arg);
+		break;
+
+	  case SCULL_IOCHQSET:
+		if (! capable (CAP_SYS_ADMIN))
+			return -EPERM;
+		tmp = scull_qset;
+		scull_qset = arg;
+		return tmp;
+
+	  default:  /* redundant, as cmd was checked against MAXNR */
+		return -ENOTTY;
+	}
+	return retval;
+}
+{%- endhighlight -%}
+
+
+### Test scull ioctl
+Following simple user-space program can be used to test the ioctl commands we have implemented. It simply checks the original value of `quantum` and `qset` and verify if they are properly changed.
+
+### `scull_ioctl.c`
+{%- highlight c -%}
+#include <stdio.h>
+#include <stdlib.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/ioctl.h>
+#include <errno.h>
+#include "scull_ioctl.h"
+
+void get_values(int *quantum, int *qset, int *fd)
+{
+    int retval;
+    retval = ioctl(*fd, SCULL_IOCGQUANTUM, quantum);
+    printf("[SCULL_IOCGQUANTUM] quantum = %d, retval = %d\n", *quantum, retval < 0 ? errno : retval);
+
+    retval = ioctl(*fd, SCULL_IOCGQSET, qset);
+    printf("[SCULL_IOCGQSET] qset = %d, retval = %d\n", *qset, retval < 0 ? errno : retval);
+}
+
+void set_values(int *quantum, int *qset, int *fd)
+{
+    int retval;
+    retval = ioctl(*fd, SCULL_IOCSQUANTUM, quantum);
+    printf("[SCULL_IOCSQUANTUM] quantum = %d, retval = %d\n", *quantum, retval < 0 ? errno : retval);
+
+    retval = ioctl(*fd, SCULL_IOCSQSET, qset);
+    printf("[SCULL_IOCSQSET] qset = %d, retval = %d\n", *qset, retval < 0 ? errno : retval);
+}
+
+int main() {
+    int fd = open("/dev/scull0", O_RDWR);
+    if (fd < 0) {
+        perror("Failed to open device");
+        return -1;
+    }
+
+    int quantum, qset;
+
+    get_values(&quantum, &qset, &fd);
+
+    quantum = 10;
+    qset = 20;
+    set_values(&quantum, &qset, &fd);
+    
+    get_values(&quantum, &qset, &fd);
+
+
+    close(fd);
+
+    return 0;
+}
+
+{%- endhighlight -%}
+
+When we run the program with admin privileges, the corresponding values are indeed properly changed through ioctl commands.
+
+![ioctl result from user space program]({{'/assets/img/chapter6/scull_ioctl.png' | prepend: site.baseurl}})
+
+## 6.2 Blocking I/O
