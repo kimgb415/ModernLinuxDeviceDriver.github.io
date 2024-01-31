@@ -1,7 +1,7 @@
 ---
 layout: post
-title:  "Chapter 6. Advanced Char Drivers"
-date:   
+title:  "Chapter 6 Advanced Char Drivers"
+date: 2024-01-20 10:46:00 +0900   
 categories: Chapter 6
 ---
 
@@ -10,10 +10,10 @@ categories: Chapter 6
 
 > 💡Full code in <https://github.com/kimgb415/modern-linux-device-driver/tree/Chapter6/ioctl>.
 
-> ⚠️ `scull_pipe` realted ioctl commands are excluded for now.
+> ⚠️ `scull_pipe` realted ioctl commands are not implemented in this section.
 
 ### `scull.h`
-I have refactored the way ioctl methods are defined in the header file. `enum SCULL_IOC_ENUM` is declared to automatically track the indices for each ioctl command. 
+The way ioctl methods being defined are refactored in the header file. `enum SCULL_IOC_ENUM` is declared to automatically track the indices for each ioctl command. 
 
 
 {%- highlight c -%}
@@ -64,7 +64,7 @@ And all second arguments for ioctl declaration macros are passed with the corres
 {%- endhighlight -%}
 
 ### `main.c`
-Function signature of `access_ok` has changed so that it no more differentiates the direction of data access. It only requires `addr` and `size` as arguments.
+Function signature of `access_ok` has changed so that it no more differentiates the direction of data access. It only requires addr and size as arguments.
 
 {%- highlight c -%}
 static inline int __access_ok(const void __user *ptr, unsigned long size);
@@ -77,7 +77,7 @@ if (!access_ok((void __user *)arg, _IOC_SIZE(cmd)))
     return -EFAULT;
 {%- endhighlight -%}
 
-For another, the `ioctl`-related member field for `file_operations` has changed from `.ioctl` to `.unlocked_ioctl`. `.unlocked_ioctl` is introduced to replace the original `.ioctl` to address the bottleneck issue of `Big Kernel Lock`, while leaving the responsibility of proper locking to driver developer.
+For another, the ioctl-related member field for `file_operations` has changed from `.ioctl` to `.unlocked_ioctl`. `.unlocked_ioctl` is introduced to replace the original `.ioctl` to address the bottleneck issue of `Big Kernel Lock`, while leaving the responsibility of proper locking to driver developer.
 
 {%- highlight c -%}
 struct file_operations scull_fops = {
@@ -256,3 +256,68 @@ When we run the program with admin privileges, the corresponding values are inde
 ![ioctl result from user space program]({{'/assets/img/chapter6/scull_ioctl.png' | prepend: site.baseurl}})
 
 ## 6.2 Blocking I/O
+
+### sleepy module
+If a user process writes to `sleepy` module, it will set the `flag` and wake up all the processes in the given `wait_queue`
+
+{%- highlight c -%}
+ssize_t sleepy_write(struct file *filp, const char __user *buf, size_t count, loff_t* offset)
+{
+    MDEBUG("Process %i (%s) awakening reader processes\n", current->pid,  current->comm);
+    flag = 1;
+    wake_up_interruptible(&wait_queue);
+
+    // return to prevent the retrail of write system call
+    return count;
+}
+{%- endhighlight -%}
+
+When a user process reads `sleepy` module, it will sleep if `flag` is not set simply return after resetting `flag` to 0.
+
+{%- highlight c -%}
+ssize_t sleepy_read(struct file *filp, char __user *buf, size_t count, loff_t* offset)
+{
+    MDEBUG("Process %i (%s) sleep to wait for writers\n", current->pid, current->comm);
+    wait_event_interruptible(wait_queue, flag != 0);
+    flag = 0;
+    MDEBUG("Process %i (%s) awaken\n", current->pid, current->comm);
+
+    // indicates EOF
+    return 0;
+}
+{%- endhighlight -%}
+
+### Race condition of sleepy module
+
+As mentioned in the book, the `sleepy` module is vulnerable to the race condition upon awakening the reader processes. It is not guranteed that only one reader process will be awaken at a time due to the possible race condition at the moment between `wait_event_interruptible(wait_queue, flag != 0);` and `flag = 0;` in `sleepy_read` function.
+
+This race condition can be easily produced if there are multiple reader processes sleeping in wait queue before a write system call occurs. `multithread_sleepy.py` spawns multiple threads to read the `sleepy` module and those threads done reading will print out a simple message.
+
+{%- highlight python -%}
+import os
+import threading
+
+sleepy_device = os.path.join(os.path.sep, "dev", "sleepy")
+thread_count = 10
+
+
+def read_sleepy(idx):
+    with open(sleepy_device, "r") as device:
+        device.read()
+    print(f"thread {idx} awake up")
+
+threads = []
+for i in range(thread_count):
+    t = threading.Thread(target=read_sleepy, args=(i,))
+    threads.append(t)
+    t.start()
+
+for t in threads:
+    t.join()
+
+{%- endhighlight -%}
+
+Run the python script through `sudo -E python3 multithread_sleepy.py` and then write to `sleepy` device through `echo hello | sudo dd of=/dev/sleepy`. If you are *lucky* enough, you will see multiple threads are awaken on a single write.
+
+![race condition of sleepy module]({{'/assets/img/chapter6/sleepy_race_condition.png' | prepend: site.baseurl}})
+
