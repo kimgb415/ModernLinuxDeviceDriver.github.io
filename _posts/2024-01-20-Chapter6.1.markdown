@@ -1,6 +1,6 @@
 ---
 layout: post
-title:  "Chapter 6 Advanced Char Drivers"
+title:  "Chapter 6.1 Advanced Char Drivers - Scull IOCTL"
 date: 2024-01-20 10:46:00 +0900   
 categories: Chapter 6
 ---
