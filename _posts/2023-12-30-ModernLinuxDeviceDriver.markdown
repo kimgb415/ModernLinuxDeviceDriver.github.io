@@ -1,6 +1,6 @@
 ---
 layout: post
-title:  "Intro of Modern Linux Device Driver"
+title:  "Chapter 0. Intro of Modern Linux Device Driver"
 date:   2023-12-30 22:32:15 +0900
 categories: ETC
 ---
